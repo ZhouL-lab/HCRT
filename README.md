@@ -1,2 +1,2 @@
-# HETNet
-HETNet: Hybrid Efficient Transformer Network for breast tumor segmentation in DCE-MRI
+# HCRT
+HCRT: Hybrid Network with Correlation-Aware Region Transformer for Breast Tumor Segmentation in DCE-MRI
