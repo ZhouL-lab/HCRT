@@ -6,7 +6,9 @@ import SimpleITK as sitk
 from options.Options import Options_x
 from tqdm import tqdm
 import time
+
 from Model.HCRT import HCRT
+
 from torch.utils.data import DataLoader
 from utils import logger, util
 from utils.metrics import seg_metric
@@ -24,12 +26,15 @@ def load(file):
     return image
 
 def test_all(model_name='latest_model.pth'):
-    opt = Options_x().parse()  # get training options
+    opt = Options_x().parse()
     device = torch.device('cuda:' + opt.gpu_ids if torch.cuda.is_available() else "cpu")
+
     model = HCRT(inch=2, base_channeel=32, imgsize=[48, 128, 128]).to(device)
+
     ckpt = torch.load(opt.checkpoints_dir + '/' + opt.task_name + '/model/' + model_name, map_location=device)
     model.load_state_dict(ckpt['model'])
-    save_result_path = os.path.join(opt.checkpoints_dir, opt.task_name, 'Predyn_InferTime')
+    save_result_path = os.path.join(opt.checkpoints_dir, opt.task_name, 'Pred')
+
     util.mkdir(save_result_path)
     model.eval()
     log_test = logger.Test_Logger(save_result_path, "results")
@@ -41,26 +46,26 @@ def test_all(model_name='latest_model.pth'):
         save_tool = Recompone_tool(original_shape, new_shape, cut_param)
         dataloader = DataLoader(img_dataset, batch_size=opt.test_batch, num_workers=opt.num_threads, shuffle=False)
         with torch.no_grad():
+            total_batches = 0
             for pre, pos, sub, gt in tqdm(dataloader):
                 pre, pos, sub, gt = pre.to(device), pos.to(device), sub.to(device), gt.to(device)
                 pos = pos.unsqueeze(1).type(torch.float32)
                 sub = sub.unsqueeze(1).type(torch.float32)
-                start_time = time.time()
                 output = model(torch.cat([pos, sub], 1))
-                end_time = time.time()
-                epoch_time = end_time - start_time
-                print(f"Time Elapsed: {epoch_time:.4f} seconds")
                 output = (output >= 0.5).type(torch.float32)
                 save_tool.add_result(output.detach().cpu())
-
+                total_batches += 1
         pred = save_tool.recompone_overlap()
         recon = (pred.numpy() > 0.5).astype(np.uint16) * mask
-        gt = load(os.path.join(opt.datapath, 'label', '{}_GT.nii.gz'.format(file_idx)))
+        gt_path = os.path.join(opt.datapath, 'label', '{}_GT.nii.gz'.format(file_idx))
+        gt_img = sitk.ReadImage(gt_path)
+        gt = sitk.GetArrayFromImage(gt_img)
         DSC, PPV, SEN, ASD = seg_metric(recon, gt)
         dice_all += DSC
         index_results = OrderedDict({'DSC': DSC, 'PPV': PPV, 'SEN': SEN, 'ASD': ASD})
         log_test.update(file_idx, index_results)
         Pred = sitk.GetImageFromArray(np.array(recon))
+        Pred.CopyInformation(gt_img)
         result_save_path = os.path.join(save_result_path, file_idx)
         util.mkdir(result_save_path)
         sitk.WriteImage(Pred, os.path.join(result_save_path, 'pred.nii.gz'))
